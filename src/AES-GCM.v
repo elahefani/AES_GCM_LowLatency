@@ -15,6 +15,18 @@
 
 
 
+
+/*
+current stage:
+we need an always to push the headers into output queue
+
+we need an always to start GHASH function to start process the headers
+
+we have AES encrypted counters in aes_out array
+
+*/
+
+
 module AesGcmEnc (
 
    input clk,
@@ -22,7 +34,7 @@ module AesGcmEnc (
    input rst,
    
 
-   input keyUsed, // GCM tell the key generation module that the current key is no longer needed. Upon receiving this signal, key generator deasserts keyReady and starts generating the next key.
+   output reg keyUsed, // GCM tell the key generation module that the current key is no longer needed. Upon receiving this signal, key generator deasserts keyReady and starts generating the next key.
 
    input keyReady, // Key generator tells GCM that the next key is ready.
 
@@ -48,19 +60,26 @@ reg [2:0] state;
 reg [127:0] headerlen;
 reg [127:0] payloadlen;
 reg [127:0] iv;
-reg [127:0] key;
+reg [127:0] keyrec;
 
 
 wire [127:0] aes_out [0:99];
 reg [127:0] aes_in [0:99];
 reg aes_start [0:99];
 wire aes_done [0:99];
+reg [127:0] headers [0:99];
+reg [127:0] payloads [0:99];
+reg [7:0] readheaderindex;
+reg [7:0] readpayloadindex;
+reg [7:0] writeheaderindex;
+reg [7:0] writepayloadindex;
+
 
 genvar i;
 generate
     for (i = 0; i < 100; i = i + 1) begin : aes_instances
         aes aes_inst (
-            .k(key), 
+            .k(keyrec), 
             .pt(aes_in[i]), 
             .ct(aes_out[i]), 
             .kv(aes_start[i]), 
@@ -91,28 +110,52 @@ always @(posedge clk or posedge rst)begin
       
       key <= 128'd0;
 
+      readheaderindex = 0;
+      writeheaderindex = 0;
+      
+      readayloadindex = 0;
+      writepayloadindex = 0;
+
       for (i = 0; i < 100; i = i + 1) begin
           aes_start[i] <= 0;
       end
 
    end
    else begin
+      rxPop = 1;
       case(state)
          startaes: begin
-            iv <= rxData;
+            iv = rxData;
+            keyrec = key;
+            keyUsed = 1;
             for (i = 0; i < 100; i = i + 1) begin
-                aes_in[i] <= iv + i; 
-                aes_start[i] <= 1;
+                aes_in[i] = iv + i; 
+                aes_start[i] = 1;
             end            
-            state <= readheaderlen;
+            state = readheaderlen;
          end
          readheaderlen: begin
-            headerlen <= rxData;
-            state <= readpayloadlen;
+            headerlen = rxData - 3;
+            state = readpayloadlen;
          end
          readpayloadlen: begin
-            payloadlen <= rxData;
-            state <= readheader;
+            payloadlen = rxData;
+            state = readheader;
+         end
+         readheader:begin
+            headers[readheaderindex] = rxData;
+            readheaderindex = readheaderindex + 1;
+            if(readheaderindex == headerlen)begin
+               state = readpayload;
+            end
+         end
+         readpayload:begin
+            payloads[readpayloadindex] = rxData;
+            readpayloadindex = readpayloadindex + 1;
+            if(readpayloadindex == payloadlen)begin
+               // state = startaes;
+               // finish = 1;
+            end
          end
       endcase
    end
