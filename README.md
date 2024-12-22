@@ -17,7 +17,6 @@ AES-GCM (Advanced Encryption Standard - Galois/Counter Mode) is a widely used en
 
 - `src/`: Contains the Verilog source files for the AES-GCM encryption system.
   - `AES-GCM.v`: The main module implementing the AES-GCM encryption.
-  - `aes.v`: Core AES encryption logic.
   - `gf.v`: Galois/Counter Mode logic.
 - `testbench/`: Contains testbench files for simulation and verification.
   - `aes_gcm_tb.v`: Testbench for the AES-GCM encryption system.
