@@ -84,13 +84,16 @@ generate
             .ct(aes_out[j]), 
             .kv(aes_start[j]), 
             .ptv(aes_start[j]), 
-            .ctv(aes_done[j]), 
+            .ctv(aes_done[j]),
             .clk(clk), 
             .rstn(~rst)
         );
     end
 endgenerate
 
+
+
+reg [4:0]counter = 0;
 
 integer i;
 
@@ -103,6 +106,10 @@ localparam startaes = 3'd0,
 
 
 always @(posedge clk or posedge rst)begin
+   counter = counter + 1;
+   for (i = 0; i < 100; i = i + 1) begin
+      aes_start[i] = 0;
+   end  
    if(rst)begin
       state <= 3'd0;
       
@@ -114,20 +121,20 @@ always @(posedge clk or posedge rst)begin
       
       keyrec <= 128'd0;
 
-      readheaderindex = 0;
-      writeheaderindex = 0;
+      readheaderindex <= 0;
+      writeheaderindex <= 0;
       
-      readpayloadindex = 0;
-      writepayloadindex = 0;
+      readpayloadindex <= 0;
+      writepayloadindex <= 0;
 
       for (i = 0; i < 100; i = i + 1) begin
-          aes_start[i] <= 0;
+         aes_start[i] <= 0;
       end
    end
 
    else begin
-      rxPop = 1;
-      if(aes_instances[99].aes_inst.ctv)begin
+      rxPop <= 1;
+      if(aes_done[0])begin
          for (i = 0; i < 100; i = i + 1) begin
             $display("aes_out[%d] = %h", i, aes_out[i]);
          end
@@ -136,37 +143,36 @@ always @(posedge clk or posedge rst)begin
       case(state)
          startaes: begin
             iv = rxData;
-            $display("iv = %h" , iv);
-            keyrec = key;
-            $display("key = %h" , key);
-            keyUsed = 1;
+            keyrec <= key;
+
+            keyUsed <= 100;
             for (i = 0; i < 100; i = i + 1) begin
                aes_in[i] = iv + i; 
                // $display("%h" , aes_in[i]);
                aes_start[i] = 1;
             end            
-            state = readheaderlen;
+            state <= readheaderlen;
          end
          readheaderlen: begin
-            headerlen = rxData - 3;
-            state = readpayloadlen;
+            headerlen <= rxData - 3;
+            state <= readpayloadlen;
          end
          readpayloadlen: begin
-            payloadlen = rxData;
-            state = readheader;
+            payloadlen <= rxData;
+            state <= readheader;
          end
          readheader:begin
-            headers[readheaderindex] = rxData;
-            readheaderindex = readheaderindex + 1;
+            headers[readheaderindex] <= rxData;
+            readheaderindex <= readheaderindex + 1;
             if(readheaderindex == headerlen)begin
-               state = readpayload;
+               state <= readpayload;
             end
          end
          readpayload:begin
-            payloads[readpayloadindex] = rxData;
-            readpayloadindex = readpayloadindex + 1;
+            payloads[readpayloadindex] <= rxData;
+            readpayloadindex <= readpayloadindex + 1;
             if(readpayloadindex == payloadlen)begin
-               state = waits;
+               state <= waits;
                // finish = 1;
             end
          end
@@ -223,24 +229,24 @@ module TEST;
         clk = 0;
         rst = 1;
         keyReady = 0;
-        key = 128'h0123456789ABCDEF0123456789ABCDEF;
+        key = 128'hfeffe9928665731c6d6a8f9467308308;
         txFull = 0;
         rxEmpty = 1;
-        rxData = 128'h0123456789ABCDEF0123456700000000;
+        rxData = 128'hcafebabefacedbaddecaf88800000000;
 
         // Wait for global reset
-        #100;
+        #10;
         rst = 0;
 
         // Test sequence
-        #10 keyReady = 1; key = 128'h0123456789ABCDEF0123456789ABCDEF;
-        #10 rxEmpty = 0; rxData = 128'h0123456789ABCDEF0123456700000000;
-        #10 rxData = 128'hFEDCBA9876543210FEDCBA9876543210;
+        keyReady = 1; key = 128'he7e3c4741a4c0182124d68f8b7e8d256;
+        rxEmpty = 0; rxData = 128'h30052e2033024357f4e329a288106c68;
+      //   #10 rxData = 128'h0123456789ABCDEF0123456700000000;
         // Add more test vectors as needed
 
         // Finish simulation
-        #1000;
-        $stop;
+        #100000;
+      //   $stop;
     end
 
     // Clock generation
@@ -367,7 +373,6 @@ module aes
          else             rkey <= rkey_next;
       end
    end
-   
    always @(posedge clk or posedge rst) begin
      if (rst)          rcon <= 8'h01;
      else if (EN) begin

@@ -1,2 +1,7 @@
 /src/work
 /src/transcript
+/report
+/sim
+/constraint
+/commands.tcl
+/vivado.sh
