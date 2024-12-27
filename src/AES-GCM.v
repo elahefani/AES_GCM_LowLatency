@@ -38,7 +38,7 @@ module AesGcmEnc (
 
    input keyReady, // Key generator tells GCM that the next key is ready.
 
-   input [127:0] key, // AES-256 key
+   input [127:0] key, // AES-128 key
 
    input txFull,
 
@@ -52,7 +52,7 @@ module AesGcmEnc (
 
    input [127:0] rxData,
 
-   output rxPop,
+   output reg rxPop
 
 );
 
@@ -75,27 +75,31 @@ reg [7:0] writeheaderindex;
 reg [7:0] writepayloadindex;
 
 
-genvar i;
+genvar j;
 generate
-    for (i = 0; i < 100; i = i + 1) begin : aes_instances
+   for (j = 0; j < 100; j = j + 1) begin : aes_instances
         aes aes_inst (
             .k(keyrec), 
-            .pt(aes_in[i]), 
-            .ct(aes_out[i]), 
-            .kv(aes_start[i]), 
-            .ptv(aes_start[i]), 
-            .ctv(aes_done[i]), 
+            .pt(aes_in[j]), 
+            .ct(aes_out[j]), 
+            .kv(aes_start[j]), 
+            .ptv(aes_start[j]), 
+            .ctv(aes_done[j]), 
             .clk(clk), 
             .rstn(~rst)
         );
     end
 endgenerate
 
+
+integer i;
+
 localparam startaes = 3'd0,
            readheaderlen = 3'd1,
            readpayloadlen = 3'd2,
            readheader = 3'd3,
-           readpayload = 3'd4;
+           readpayload = 3'd4,
+           waits = 3'd5;
 
 
 always @(posedge clk or posedge rst)begin
@@ -108,29 +112,38 @@ always @(posedge clk or posedge rst)begin
       
       iv <= 128'd0;
       
-      key <= 128'd0;
+      keyrec <= 128'd0;
 
       readheaderindex = 0;
       writeheaderindex = 0;
       
-      readayloadindex = 0;
+      readpayloadindex = 0;
       writepayloadindex = 0;
 
       for (i = 0; i < 100; i = i + 1) begin
           aes_start[i] <= 0;
       end
-
    end
+
    else begin
       rxPop = 1;
+      if(aes_instances[99].aes_inst.ctv)begin
+         for (i = 0; i < 100; i = i + 1) begin
+            $display("aes_out[%d] = %h", i, aes_out[i]);
+         end
+         $stop;
+      end
       case(state)
          startaes: begin
             iv = rxData;
+            $display("iv = %h" , iv);
             keyrec = key;
+            $display("key = %h" , key);
             keyUsed = 1;
             for (i = 0; i < 100; i = i + 1) begin
-                aes_in[i] = iv + i; 
-                aes_start[i] = 1;
+               aes_in[i] = iv + i; 
+               // $display("%h" , aes_in[i]);
+               aes_start[i] = 1;
             end            
             state = readheaderlen;
          end
@@ -153,9 +166,12 @@ always @(posedge clk or posedge rst)begin
             payloads[readpayloadindex] = rxData;
             readpayloadindex = readpayloadindex + 1;
             if(readpayloadindex == payloadlen)begin
-               // state = startaes;
+               state = waits;
                // finish = 1;
             end
+         end
+         waits:begin
+
          end
       endcase
    end
@@ -168,64 +184,67 @@ end
 
 endmodule
 
-`define period 10
 module TEST;
 
     // Inputs
     reg clk;
     reg rst;
-    reg [95:0] iv;
-    reg [255:0] key;
-    reg [127:0] rxData;
+    reg keyReady;
+    reg [127:0] key;
+    reg txFull;
     reg rxEmpty;
+    reg [127:0] rxData;
 
     // Outputs
+    wire keyUsed;
     wire [127:0] txData;
     wire txPush;
     wire finish;
     wire rxPop;
 
-    // Instantiate the AesGcmEnc module
+    // Instantiate the Unit Under Test (UUT)
     AesGcmEnc uut (
-        .clk(clk),
-        .rst(rst),
-        .iv(iv),
-        .key(key),
-        .rxData(rxData),
-        .rxEmpty(rxEmpty),
-        .txData(txData),
-        .txPush(txPush),
-        .finish(finish),
+        .clk(clk), 
+        .rst(rst), 
+        .keyUsed(keyUsed), 
+        .keyReady(keyReady), 
+        .key(key), 
+        .txFull(txFull), 
+        .txData(txData), 
+        .txPush(txPush), 
+        .finish(finish), 
+        .rxEmpty(rxEmpty), 
+        .rxData(rxData), 
         .rxPop(rxPop)
     );
 
-    // Clock generation
     initial begin
+        // Initialize Inputs
         clk = 0;
-        forever #5 clk = ~clk; // 10 time units period
-    end
-
-    // Test sequence
-    initial begin
-        // Initialize inputs
         rst = 1;
-        iv = 96'h1234567890abcdef12345678;
-        key = 256'h00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff;
-        rxData = 128'h00112233445566778899aabbccddeeff;
-        rxEmpty = 0;
+        keyReady = 0;
+        key = 128'h0123456789ABCDEF0123456789ABCDEF;
+        txFull = 0;
+        rxEmpty = 1;
+        rxData = 128'h0123456789ABCDEF0123456700000000;
 
-        // Reset the system
-        #10 rst = 0;
+        // Wait for global reset
+        #100;
+        rst = 0;
 
-        // Wait for the encryption to complete
-        wait(finish);
+        // Test sequence
+        #10 keyReady = 1; key = 128'h0123456789ABCDEF0123456789ABCDEF;
+        #10 rxEmpty = 0; rxData = 128'h0123456789ABCDEF0123456700000000;
+        #10 rxData = 128'hFEDCBA9876543210FEDCBA9876543210;
+        // Add more test vectors as needed
 
-        // Check the output
-        $display("Encryption complete. Output data: %h", txData);
-
-        // Finish the simulation
+        // Finish simulation
+        #1000;
         $stop;
     end
+
+    // Clock generation
+    always #5 clk = ~clk;
 
 endmodule
 
