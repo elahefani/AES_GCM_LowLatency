@@ -1,5 +1,7 @@
 /src/work
 /src/transcript
+/src/AES-GCM.v.bak
+/src/ghash.v
 /report
 /sim
 /constraint
