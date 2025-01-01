@@ -35,8 +35,8 @@ def encrypt_iv_with_numbers(hex_key, hex_iv):
 
 
 # Example usage
-hex_key = "0123456789abcdef0123456789abcdef"  # Example 128-bit key in hex
-hex_iv =  "0123456789abcdef0123456700000000"  # Example 128-bit IV in hex
+hex_key = "00000000000000000000000000000000"  # Example 128-bit key in hex
+hex_iv =  "00000000000000000000000000000000"  # Example 128-bit IV in hex
 
 encrypted_data = encrypt_iv_with_numbers(hex_key, hex_iv)
 for i, encrypted in enumerate(encrypted_data):

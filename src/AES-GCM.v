@@ -75,23 +75,43 @@ reg [7:0] writeheaderindex;
 reg [7:0] writepayloadindex;
 
 
-genvar j;
-generate
-   for (j = 0; j < 100; j = j + 1) begin : aes_instances
-        aes aes_inst (
+// genvar j;
+// generate
+//    for (j = 0; j < 1; j = j + 1) begin : aes_instances
+//         aes aes_inst (
+//             .k(keyrec), 
+//             .pt(aes_in[j]), 
+//             .ct(aes_out[j]), 
+//             .kv(aes_start[j]), 
+//             .ptv(aes_start[j]), 
+//             .ctv(aes_done[j]),
+//             .clk(clk), 
+//             .rstn(~rst)
+//         );
+//     end
+// endgenerate
+
+
+aes aes_inst (
             .k(keyrec), 
-            .pt(aes_in[j]), 
-            .ct(aes_out[j]), 
-            .kv(aes_start[j]), 
-            .ptv(aes_start[j]), 
-            .ctv(aes_done[j]),
+            .pt(aes_in[0]), 
+            .ct(aes_out[0]), 
+            .kv(aes_start[0]), 
+            .ptv(aes_start[0]), 
+            .ctv(aes_done[0]),
             .clk(clk), 
             .rstn(~rst)
         );
-    end
-endgenerate
+wire [127:0] gf_result ;
+reg gfreset;
 
-
+gf128_mult gf128_mult_inst (
+    .clk(clk),
+    .reset(gfreset),
+    .a(keyrec),
+    .b(iv),
+    .result(gf_result)
+);
 
 reg [4:0]counter = 0;
 
@@ -107,12 +127,12 @@ localparam startaes = 3'd0,
 
 always @(posedge clk or posedge rst)begin
    counter = counter + 1;
-   for (i = 0; i < 100; i = i + 1) begin
+   for (i = 0; i < 1; i = i + 1) begin
       aes_start[i] = 0;
    end  
    if(rst)begin
       state <= 3'd0;
-      
+      gfreset <= 1;
       headerlen <= 128'd0;
       
       payloadlen <= 128'd0;
@@ -127,26 +147,29 @@ always @(posedge clk or posedge rst)begin
       readpayloadindex <= 0;
       writepayloadindex <= 0;
 
-      for (i = 0; i < 100; i = i + 1) begin
+      for (i = 0; i < 1; i = i + 1) begin
          aes_start[i] <= 0;
       end
    end
 
    else begin
       rxPop <= 1;
+      if(gfreset == 0)begin
+         $display("gf_result = %h", gf_result);
+      end
+
       if(aes_done[0])begin
-         for (i = 0; i < 100; i = i + 1) begin
+         for (i = 0; i < 1; i = i + 1) begin
             $display("aes_out[%d] = %h", i, aes_out[i]);
          end
-         $stop;
       end
       case(state)
          startaes: begin
             iv = rxData;
             keyrec <= key;
-
-            keyUsed <= 100;
-            for (i = 0; i < 100; i = i + 1) begin
+            gfreset = 0;
+            keyUsed <= 1;
+            for (i = 0; i < 1; i = i + 1) begin
                aes_in[i] = iv + i; 
                // $display("%h" , aes_in[i]);
                aes_start[i] = 1;
@@ -599,3 +622,45 @@ module SubBytes (x, y);
    endfunction
 
 endmodule // SubBytes
+
+
+
+module gf128_mult (
+    input clk,
+    input reset,
+    input [127:0] a,
+    input [127:0] b,
+    output reg [127:0] result
+);
+
+    // Polynomial for GF(2^128): x^128 + x^7 + x^2 + x + 1
+    parameter POLY = 128'h87;
+
+    reg [255:0] p; // Intermediate product
+    integer i, j;
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            result <= 128'b0;
+        end else begin
+            p = 256'b0;
+
+            // Perform multiplication
+            for (i = 0; i < 128; i = i + 1) begin
+                if (a[i] == 1'b1) begin
+                    p = p ^ (b << i);
+                end
+            end
+
+            // Reduction modulo the polynomial
+            for (j = 255; j >= 128; j = j - 1) begin
+                if (p[j] == 1'b1) begin
+                    p = p ^ (POLY << (j - 128));
+                end
+            end
+
+            result <= p[127:0];
+        end
+    end
+
+endmodule
