@@ -45,6 +45,17 @@ reg [7:0] readpayloadindex;
 reg [7:0] writeheaderindex;
 reg [7:0] writepayloadindex;
 
+reg [4:0]counter = 0;
+reg switch = 1;
+
+wire [127:0] GFMult_result[99:0];
+reg gfreset;
+
+wire [127:0] H;
+reg [127:0] zero;
+reg startH;
+wire doneH;
+
 
 // genvar j;
 // generate
@@ -64,30 +75,66 @@ reg [7:0] writepayloadindex;
 
 
 aes aes_inst (
-            .k(keyrec), 
-            .pt(aes_in[0]), 
-            .ct(aes_out[0]), 
-            .kv(aes_start[0]), 
-            .ptv(aes_start[0]), 
-            .ctv(aes_done[0]),
-            .clk(clk), 
-            .rstn(~rst)
-        );
-wire [127:0] gf_result ;
-reg gfreset;
-
-gfmul gf128_mult_inst (
-    .clk(clk),
-    .rst(gfreset),
-    .iCtext(keyrec),
-    .iHashkey(iv),
-    .oResult(gf_result)
+   .k(keyrec), 
+   .pt(aes_in[0]), 
+   .ct(aes_out[0]), 
+   .kv(aes_start[0]), 
+   .ptv(aes_start[0]), 
+   .ctv(aes_done[0]),
+   .clk(clk), 
+   .rstn(~rst)
 );
 
-reg [4:0]counter = 0;
+aes aes_h_ins (
+   .k(keyrec), 
+   .pt(zero), 
+   .ct(H), 
+   .kv(startH), 
+   .ptv(startH), 
+   .ctv(doneH),
+   .clk(clk), 
+   .rstn(~rst)
+);
+
+gfmul gfmul_inst_0 (
+   .clk(clk),
+   .rst(gfreset),
+   .iCtext(H),
+   .iHashkey(iv),
+   .oResult(GFMult_result[0])
+);
+
+gfmul gfmul_inst_1 (
+   .clk(clk),
+   .rst(gfreset),
+   .iCtext(GFMult_result[0]),
+   .iHashkey(headerlen),
+   .oResult(GFMult_result[1])
+);
+
+gfmul ghmul_inst_2 (
+   .clk(clk),
+   .rst(gfreset),
+   .iCtext(GFMult_result[1]),
+   .iHashkey(payloadlen),
+   .oResult(GFMult_result[2])
+);
+
+genvar k;
+generate
+   for (k = 0; k < 100; k=k+1) begin
+      gfmul ghmul_inst_2 (
+         .clk(clk),
+         .rst(gfreset),
+         .iCtext(GFMult_result[k+2]),
+         .iHashkey(headers[k]),
+         .oResult(GFMult_result[k+3])
+      );
+   end
+endgenerate
+
 
 integer i;
-
 localparam startaes = 3'd0,
            readheaderlen = 3'd1,
            readpayloadlen = 3'd2,
@@ -95,12 +142,13 @@ localparam startaes = 3'd0,
            readpayload = 3'd4,
            waits = 3'd5;
 
-reg switch = 1;
+
 always @(posedge clk or posedge rst)begin
    counter = counter + 1;
    for (i = 0; i < 1; i = i + 1) begin
       aes_start[i] = 0;
-   end  
+   end 
+   startH = 0; 
    if(rst)begin
       switch = 1;
       state <= 3'd0;
@@ -122,14 +170,15 @@ always @(posedge clk or posedge rst)begin
       for (i = 0; i < 1; i = i + 1) begin
          aes_start[i] <= 0;
       end
+      startH <= 0;
    end
 
    else begin
       rxPop <= 1;
-      if(gfreset == 0)begin
-         $display("gf_result = %h", gf_result);
-         gfreset = 1;
-      end
+      // if(gfreset == 0)begin
+      //    $display("gf_result = %h", gf_result);
+      //    gfreset = 1;
+      // end
 
       if(aes_done[0])begin
             $display("aes_out[%d] = %h", 0, aes_out[0]);
@@ -145,7 +194,9 @@ always @(posedge clk or posedge rst)begin
                aes_in[i] = iv + i; 
                // $display("%h" , aes_in[i]);
                aes_start[i] = 1;
-            end            
+            end
+            zero <= 128'h0;
+            startH <= 1;           
             state <= readheaderlen;
          end
          readheaderlen: begin
@@ -178,7 +229,11 @@ always @(posedge clk or posedge rst)begin
    end
 end
 
-
+initial begin
+   // $monitor("H is: %h and key is: %h",H,keyrec);
+   $monitor("mult0 is: %h,\n mult1 is: %h,\n mult2 is: %h,\n mult3 is: %h,\n mult4 is: %h,\n mult5 is: %h,\n mult6 is: %h,\n mult7 is: %h,\n\n",
+   GFMult_result[0],GFMult_result[1],GFMult_result[2],GFMult_result[3],GFMult_result[4],GFMult_result[5],GFMult_result[6],GFMult_result[7]);
+end
 
 
 

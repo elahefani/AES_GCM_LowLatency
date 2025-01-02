@@ -276,5 +276,6 @@ always @ (posedge clk or posedge rst)begin
         Z[128] = Z[127] ^ (V[127] & {128{iCtext[127]}});
         oResult = Z[128];
     end
+end
 endmodule
 
