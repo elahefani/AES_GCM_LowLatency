@@ -32,8 +32,8 @@ module gfmul_tb;
             iHashkey = 128'hb83b533708bf535d0aa6e52980d53b78;
 
     #100 $display(" clk=%b, iCtext=%h, iHashkey=%h, oResult=%h", clk, iCtext, iHashkey, oResult);
-    #10 iCtext = 128'hffffffffffffffffffffffffffffffff;
-        iHashkey = 128'h00000000000000000000000000000001;
+    #10 iCtext = 128'hb83b533708bf535d0aa6e52980d53b78;
+        iHashkey = 128'h46fb702a0c80bdd6347648fa4617c9f0;
     #100 $display(" clk=%b, iCtext=%h, iHashkey=%h, oResult=%h", clk, iCtext, iHashkey, oResult);
 
     #10 iCtext = 128'h123456789abcdef0123456789abcdef0;
