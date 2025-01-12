@@ -8,3 +8,4 @@
 /commands.tcl
 /vivado.sh
 src/constraints.xdc
+/src/compiledlib
