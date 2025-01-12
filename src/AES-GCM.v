@@ -34,8 +34,7 @@ reg [127:0] iv;
 reg [127:0] keyrec;
 wire [127:0] gf_result ;
 reg gfreset;
-
-
+reg [127:0] lena_lenc;
 wire [127:0] aes_out [0:99];
 reg [127:0] aes_in [0:99];
 reg aes_start [0:99];
@@ -46,7 +45,8 @@ reg [7:0] readheaderindex;
 reg [7:0] readpayloadindex;
 reg [7:0] writeheaderindex;
 reg [7:0] writepayloadindex;
-
+reg [127:0] H;
+reg h_computed;
 
 genvar j;
 generate
@@ -87,14 +87,74 @@ localparam startaes = 3'd0,
            waits = 3'd5;
 
 reg switch = 1;
+
+reg [9:0]ghash_counter;
+reg [9:0] ghash_counter2;
+reg final_round;
+always @(posedge clk)begin
+   txPush = 0;
+   if(h_computed && !finish)begin
+      if(ghash_counter < headerlen)begin
+         $display("GF Result:%h" , gf_result);
+         gfinput1 = H;
+         $display("%d header: %h" , ghash_counter , headers[ghash_counter]);
+         if(ghash_counter == 0) gfinput2 = headers[ghash_counter];
+         else gfinput2 = headers[ghash_counter] ^ gf_result;
+         $display("gfinput:%h" , gfinput2);
+         gfreset = 0;
+         ghash_counter = ghash_counter + 1;
+      end
+      else if(ghash_counter2 < payloadlen)begin
+         $display("GF Result:%h" , gf_result);
+         gfinput1 = H;
+         $display("%d payload: %h" , ghash_counter2 , payloads[ghash_counter2]);
+         txData = payloads[ghash_counter2] ^ payloads[ghash_counter2 + 2];
+         txPush = 1;
+         gfinput2 = payloads[ghash_counter2] ^ aes_out[ghash_counter2 + 2] ^ gf_result;
+
+         $display("gfinput:%h" , gfinput2);
+         gfreset = 0;
+         ghash_counter2 = ghash_counter2 + 1;
+      end
+      else if(final_round != 1)begin
+         $display("GF Result:%h" , gf_result);
+         gfinput1 = H;
+         gfinput2 = gf_result ^ lena_lenc;
+         $display("gfinput:%h" , gfinput2);
+         gfreset = 0;
+         final_round = 1;
+      end
+      else if(final_round)begin
+        txData = gf_result ^ aes_out[1];
+        $display("Final Result:%h" , txData);
+        txPush = 1;
+        finish = 1;
+      end
+   end
+end
+
+
+
+
 always @(posedge clk or posedge rst)begin
    for(i = 0 ; i < 21 ; i = i + 1 )begin
       aes_start[i] <= 0;
    end
    if(rst)begin
+      final_round <= 0;
+      
+      lena_lenc <= 0;
+
+      ghash_counter <= 0;
+
+      ghash_counter2 <= 0;
+      
       switch <= 1;
+      
       state <= 3'd0;
+      
       gfreset <= 1;
+      
       headerlen <= 128'd0;
       
       payloadlen <= 128'd0;
@@ -112,6 +172,10 @@ always @(posedge clk or posedge rst)begin
       gfinput1 <= 0;
       gfinput2 <= 0;
 
+      finish <= 0;
+
+      H <= 0;
+      h_computed <= 0;
       for(i = 0 ; i < 21 ; i = i + 1)begin
          aes_start[i] <= 0;
          aes_in[i] <= 0;
@@ -121,30 +185,29 @@ always @(posedge clk or posedge rst)begin
 
    else begin
       counter <= counter + 1;
-      $display("clock:" , counter);
+      // $display("clock:" , counter);
 
       rxPop <= 1;
       txPush <= 0;
       for(i = 0 ; i < 21 ; i = i + 1)begin
          if(aes_done[i])begin
             if(i == 0)begin
-               gfreset <= 0;
-               gfinput1 <= keyrec;
-               gfinput2 <= aes_out[0];
+               h_computed <= 1;
+               H <= aes_out[0];
             end
             $display("AES %d result: %h",i,aes_out[i]);
          end
       end
-      if(gf_result != 0)begin
-         $display("gf result:%h" , gf_result);
-         gfreset <= 1;
-         txData <= gf_result;
-         txPush <= 1;
-      end
       case(state)
          startaes: begin
             iv = rxData;
-            keyrec <= key;
+            headers[readheaderindex] <= rxData;
+            readheaderindex <= readheaderindex + 1;
+            txPush <= 1;
+            txData <= rxData;
+            $display("iv:%h" , iv);
+            keyrec = key;
+            $display("key:%h" , key);
             keyUsed <= 1;
             for (i = 0; i < 21; i = i + 1) begin
                if(i == 0) aes_in[i] <= 128'h0;
@@ -154,24 +217,41 @@ always @(posedge clk or posedge rst)begin
             state <= readheaderlen;
          end
          readheaderlen: begin
-            headerlen <= rxData - 3;
+            headerlen <= rxData;
+            headers[readheaderindex] <= rxData;
+            readheaderindex <= readheaderindex + 1;
+            txPush <= 1;
+            txData <= rxData;
+            $display("headerlen:%h",rxData);
             state <= readpayloadlen;
          end
          readpayloadlen: begin
+            txPush <= 1;
+            txData <= rxData;
+            payloadlen <= rxData;
+            headers[readheaderindex] <= rxData;   
+            readheaderindex <= readheaderindex + 1;     
+            lena_lenc = {headerlen[63:0] << 7, rxData[63:0] << 7};
+            $display("lena_lenc:%h" , lena_lenc);    
+            $display("payloadlen:%h" , rxData);
             payloadlen <= rxData;
             state <= readheader;
          end
          readheader:begin
             headers[readheaderindex] <= rxData;
+            txPush <= 1;
+            txData <= rxData;
+            $display("headers:%h" , rxData);
             readheaderindex <= readheaderindex + 1;
-            if(readheaderindex == headerlen)begin
+            if(readheaderindex == headerlen - 1)begin
                state <= readpayload;
             end
          end
          readpayload:begin
             payloads[readpayloadindex] <= rxData;
+            $display("payload:%h" , rxData);
             readpayloadindex <= readpayloadindex + 1;
-            if(readpayloadindex == payloadlen)begin
+            if(readpayloadindex == payloadlen - 1)begin
                state <= waits;
                // finish = 1;
             end
@@ -192,7 +272,8 @@ module gfmul (
     input rst,
     input [0:127] iCtext,
     input [0:127] iHashkey,
-    output reg [0:127] oResult
+    output reg [0:127] oResult,
+    output reg resultrdy
 );
 
     wire [0:127] Z [0:128];
@@ -215,9 +296,8 @@ module gfmul (
         if (rst)
             oResult <= 0;
         else
-            oResult <= Z[128];
+            oResult = Z[128];
     end
-
 endmodule
 
 
@@ -271,13 +351,22 @@ module TEST;
         rst = 0;
 
         // Test sequence
-        keyReady = 1; key = 128'he7e3c4741a4c0182124d68f8b7e8d256;
-        rxEmpty = 0; rxData = 128'h30052e2033024357f4e329a288106c68;
-      //   #10 rxData = 128'h0123456789ABCDEF0123456700000000;
-        // Add more test vectors as needed
-
-        // Finish simulation
+        keyReady = 1; key = 128'hfeffe9928665731c6d6a8f9467308308;
+        rxEmpty = 0; rxData = 128'hcafebabefacedbaddecaf88800000000;
         #10;
+        rxEmpty = 0; rxData = 128'h5;
+        #10
+        rxData = 128'h3;
+        #10;
+        rxData = 128'hfeedfacedeadbeeffeedfacedeadbeef;
+        #10;
+        rxData = 128'habaddad2abaddad2abaddad2abaddad2;
+        #10;
+        rxData = 128'hd9313225f88406e5a55909c5aff5269a;
+        #10;
+        rxData = 128'h86a7a9531534f7da2e4c303d8a318a72;
+        #10;
+        rxData = 128'h1c3c0c95956809532fcf0e2449a6b525;
       //   $stop;
     end
 
