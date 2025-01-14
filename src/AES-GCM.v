@@ -33,7 +33,6 @@ reg [127:0] payloadlen;
 reg [127:0] iv;
 reg [127:0] keyrec;
 wire [127:0] gf_result ;
-reg gfreset;
 reg [127:0] lena_lenc;
 wire [127:0] aes_out [0:99];
 reg [127:0] aes_in [0:99];
@@ -68,14 +67,10 @@ reg [127:0] gfinput1;
 reg [127:0] gfinput2;
 
 gfmul gf128_mult_inst (
-    .clk(clk),
-    .rst(gfreset),
     .iCtext(gfinput1),
     .iHashkey(gfinput2),
     .oResult(gf_result)
 );
-
-reg [99:0]counter = 0;
 
 integer i;
 
@@ -86,12 +81,11 @@ localparam startaes = 3'd0,
            readpayload = 3'd4,
            waits = 3'd5;
 
-reg switch = 1;
 
 reg [9:0]ghash_counter;
 reg [9:0] ghash_counter2;
 reg final_round;
-always @(posedge clk)begin
+always @(posedge clk or posedge rst)begin
    if(rst)begin
       ghash_counter <= 0;
 
@@ -102,14 +96,13 @@ always @(posedge clk)begin
       finish <= 0;
       txData <= 0;
       txPush <= 0;
-
-      gfreset <= 1;
       
       final_round <= 0;
       
       writepayloadindex <= 0;
 
       writeheaderindex <= 0;
+
    end
    else begin
       txPush <= 0;
@@ -118,15 +111,15 @@ always @(posedge clk)begin
          txPush <= 1;
          writeheaderindex <= writeheaderindex + 1;
       end
-      else if(h_computed && !finish)begin
+      if(h_computed && !finish)begin
          if(ghash_counter < headerlen)begin
             // $display("GF Result:%h" , gf_result);
             gfinput1 <= H;
+            // $display("H:%h" , H);
             // $display("%d header: %h" , ghash_counter , headers[ghash_counter]);
             if(ghash_counter == 0) gfinput2 <= headers[ghash_counter];
             else gfinput2 <= headers[ghash_counter] ^ gf_result;
             // $display("gfinput:%h" , headers[ghash_counter] ^ gf_result);
-            gfreset <= 0;
             ghash_counter <= ghash_counter + 1;
          end
          else if(ghash_counter2 < payloadlen)begin
@@ -138,15 +131,13 @@ always @(posedge clk)begin
             gfinput2 <= payloads[ghash_counter2] ^ aes_out[ghash_counter2 + 2] ^ gf_result;
    
             // $display("gfinput:%h" , payloads[ghash_counter2] ^ aes_out[ghash_counter2 + 2] ^ gf_result);
-            gfreset <= 0;
             ghash_counter2 <= ghash_counter2 + 1;
          end
          else if(final_round != 1)begin
-            // $display("GF Result:%h" , gf_resulst);
+            // $display("GF Result:%h" , gf_result);
             gfinput1 <= H;
             gfinput2 <= gf_result ^ lena_lenc;
             // $display("gfinput:%h" , gf_result ^ lena_lenc);
-            gfreset <= 0;
             final_round <= 1;
          end
          else if(final_round)begin
@@ -170,15 +161,15 @@ always @(posedge clk or posedge rst)begin
       aes_start[i] <= 0;
    end
    if(rst)begin
-      
+      for(i = 0 ; i < 100 ; i = i + 1)begin
+         headers[i] <= 0;
+         payloads[i] <= 0;
+      end 
       lena_lenc <= 0;
 
       // ghash_counter <= 0;
 
-      // ghash_counter2 <= 0;
-      
-      switch <= 1;
-      
+      // ghash_counter2 <= 0;      
       state <= 3'd0;
       
       
@@ -211,8 +202,6 @@ always @(posedge clk or posedge rst)begin
    end
 
    else begin
-      counter <= counter + 1;
-      // $display("clock:" , counter);
 
       rxPop <= 1;
       // txPush <= 0;
@@ -300,11 +289,9 @@ endmodule
 
 
 module gfmul (
-    input clk,
-    input rst,
     input [0:127] iCtext,
     input [0:127] iHashkey,
-    output reg [0:127] oResult
+    output [0:127] oResult
     );
 
     wire [0:127] Z [0:128];
@@ -321,14 +308,7 @@ module gfmul (
         for (j = 0; j < 128; j = j + 1)
             assign Z[j+1] = Z[j] ^ (V[j] & {128{iCtext[j]}});
     endgenerate
-
-
-    always @ (posedge clk or posedge rst) begin
-        if (rst)
-            oResult <= 0;
-        else
-            oResult = Z[128];
-    end
+    assign oResult = Z[128];
 endmodule
 
 

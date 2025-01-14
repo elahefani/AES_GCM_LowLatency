@@ -1,4 +1,4 @@
-`timescale 1ns/1ns
+`timescale 1 ns / 1 ns
 module TEST;
 
     // Inputs
@@ -35,7 +35,7 @@ module TEST;
 
     initial begin
         // Initialize Inputs
-         $monitor("Time: %0t | txData: %h ", $time, txData);
+        $monitor("Time: %0t | txData: %h | finish: %h", $time, txData,finish);
         clk = 0;
         rst = 1;
         keyReady = 0;
@@ -45,30 +45,32 @@ module TEST;
         rxData = 128'hcafebabefacedbaddecaf88800000000;
 
         // Wait for global reset
-        #10;
+        #1000;
         rst = 0;
 
         // Test sequence
         keyReady = 1; key = 128'hfeffe9928665731c6d6a8f9467308308;
         rxEmpty = 0; rxData = 128'hcafebabefacedbaddecaf88800000000;
-        #10;
+        #1000;
         rxEmpty = 0; rxData = 128'h5;
-        #10
+        #1000;
         rxData = 128'h3;
-        #10;
+        #1000;
         rxData = 128'hfeedfacedeadbeeffeedfacedeadbeef;
-        #10;
+        #1000;
         rxData = 128'habaddad2abaddad2abaddad2abaddad2;
-        #10;
+        #1000;
         rxData = 128'hd9313225f88406e5a55909c5aff5269a;
-        #10;
+        #1000;
         rxData = 128'h86a7a9531534f7da2e4c303d8a318a72;
-        #10;
+        #1000;
         rxData = 128'h1c3c0c95956809532fcf0e2449a6b525;
-      //   $stop;
+        wait (finish == 1);
+        wait (finish == 0);
+        $stop;
     end
 
     // Clock generation
-    always #5 clk = ~clk;
+    always #500 clk = ~clk;
 
 endmodule

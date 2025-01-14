@@ -26,7 +26,7 @@ module gfmul (
         if (rst)
             oResult <= 0;
         else
-            oResult <= Z[128];
+            oResult = Z[128];
     end
 
 endmodule

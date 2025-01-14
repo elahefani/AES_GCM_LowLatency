@@ -28,7 +28,7 @@ module gfmul_tb;
     iHashkey = 128'h0;
 
     // Apply test vectors
-    #10     iCtext = 128'h92cdf2c2ef434ea04ee66cc2189c7c1e;
+    #10     iCtext = 128'h00000000000000000000000000000005;
             iHashkey = 128'hb83b533708bf535d0aa6e52980d53b78;
 
     #100 $display(" clk=%b, iCtext=%h, iHashkey=%h, oResult=%h", clk, iCtext, iHashkey, oResult);
