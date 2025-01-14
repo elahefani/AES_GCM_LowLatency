@@ -9,7 +9,7 @@ module TEST;
     reg txFull;
     reg rxEmpty;
     reg [127:0] rxData;
-
+    reg [99:0]counter; 
     // Outputs
     wire keyUsed;
     wire [127:0] txData;
@@ -38,6 +38,7 @@ module TEST;
         $monitor("Time: %0t | txData: %h | finish: %h", $time, txData,finish);
         clk = 0;
         rst = 1;
+        counter = 0;
         keyReady = 0;
         key = 128'hfeffe9928665731c6d6a8f9467308308;
         txFull = 0;
@@ -56,6 +57,9 @@ module TEST;
         #1000;
         rxData = 128'h3;
         #1000;
+        rxEmpty = 1;
+        #1000;
+        rxEmpty = 0;
         rxData = 128'hfeedfacedeadbeeffeedfacedeadbeef;
         #1000;
         rxData = 128'habaddad2abaddad2abaddad2abaddad2;
@@ -71,6 +75,11 @@ module TEST;
     end
 
     // Clock generation
-    always #500 clk = ~clk;
-
+    always begin
+        #500 clk = ~clk;
+        if(clk)begin
+            counter = counter + 1;
+            // $display("clock:%d" , counter);
+        end
+    end
 endmodule

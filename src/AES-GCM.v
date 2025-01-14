@@ -38,9 +38,10 @@ wire [127:0] aes_out [0:99];
 reg [127:0] aes_in [0:99];
 reg aes_start [0:99];
 wire aes_done [0:99];
+reg [127:0]aes_out_reg [0:999];
 reg [127:0] headers [0:99];
 reg [127:0] payloads [0:99];
-reg [127:0] outputs[0:199];
+reg [127:0] outputs[0:999];
 reg [7:0] readheaderindex;
 reg [7:0] readpayloadindex;
 reg [7:0] writeheaderindex;
@@ -54,12 +55,12 @@ reg [9:0]writeindex;
 reg [9:0]last_output;
 reg [127:0] gfinput1;
 reg [127:0] gfinput2;
-
+reg [99:0] aes_round;
 
 
 genvar j;
 generate
-   for (j = 0; j < 21; j = j + 1) begin : aes_instances
+   for (j = 0; j < 100; j = j + 1) begin : aes_instances
         aes aes_inst (
             .k(keyrec), 
             .pt(aes_in[j]), 
@@ -80,7 +81,7 @@ gfmul gf128_mult_inst (
 );
 
 integer i;
-
+integer m;
 localparam startaes = 3'd0,
            readheaderlen = 3'd1,
            readpayloadlen = 3'd2,
@@ -89,22 +90,92 @@ localparam startaes = 3'd0,
            waits = 3'd5;
 
 
-
+always @(posedge clk or posedge rst)begin
+   for(i = 0 ; i < 100 ; i = i + 1 )begin
+      aes_start[i] <= 0;
+   end
+   if(aes_done[0])begin
+      for(m = 0 ; m < 100 ; m = m + 1)begin
+         aes_out_reg[((aes_round - 1)* 100) + m] <= aes_out[m];
+         // $display("aes_out:%h" , aes_done[m]);
+         if(aes_round == 1)begin
+            H <= aes_out[0];
+            h_computed <= 1;
+         end
+      end
+      aes_round = aes_round + 1;
+      if(aes_round < 9)begin
+         for (i = 0; i < 100; i = i + 1) begin
+            aes_in[i] <= iv + (aes_round * 100) + i - 1; 
+            // $display("aes_in: %h" , iv + (aes_round * 100) + i - 1);
+            aes_start[i] <= 1;
+         end
+      end
+   end
+   if(rst)begin
+      
+      H <= 0;
+      
+      h_computed <= 0;
+      
+      aes_round = 0;
+      for(i = 0 ; i < 21 ; i = i + 1)begin
+         aes_start[i] <= 0;
+      
+         aes_in[i] <= 0;
+      end
+      
+      for(i = 0 ; i < 1000 ; i = i + 1)begin
+        
+         aes_out_reg[i] <= 0;
+      
+      end
+   
+   end
+   else begin
+      if(readheaderindex == 8'd1 && aes_round == 0)begin
+         
+         for (i = 0; i < 100; i = i + 1) begin
+         
+            if(i == 0) aes_in[i] <= 128'h0;
+         
+            else aes_in[i] <= iv + i - 1; 
+         
+            // $display("aes_in: %h",iv + i - 1);
+         
+            aes_start[i] <= 1;
+         
+         end
+         
+         aes_round = aes_round + 1;
+      end
+   end
+end
 
 always @(posedge clk or posedge rst) begin
    if(rst)begin
       finish <= 0;
       txData <= 0;
       txPush <= 0;
-      writeindex <= 0;      
+      writeindex <= 0;   
+      for(i = 0 ; i < 1000 ; i = i + 1)begin
+         outputs[i] <= 0;
+      end 
    end
    else begin
       txPush <= 0;
       finish <= 0;
-      if(txFull == 0 && writeindex < readheaderindex + ghash_counter2)begin
-         txData <= outputs[writeindex];
+      if(txFull == 0 && writeindex < readheaderindex)begin
+         txData <= headers[writeindex];
          txPush <= 1;
-         if(writeindex >= headerlen + payloadlen) finish <= 1;
+         writeindex <= writeindex + 1;
+      end
+      else if(txFull == 0 && writeindex < readheaderindex + ghash_counter2)begin
+         if(writeindex != headerlen + payloadlen)begin
+            txData <= outputs[writeindex];
+            txPush <= 1;
+         end
+         if(writeindex > headerlen + payloadlen) finish <= 1;
          writeindex <= writeindex + 1;
       end
       
@@ -130,25 +201,24 @@ always @(posedge clk or posedge rst)begin
    end
    else begin
       if(h_computed && !finish)begin
-         if(ghash_counter < headerlen)begin
+         if(ghash_counter < readheaderindex)begin
             gfinput1 <= H;
             if(ghash_counter == 0) gfinput2 <= headers[ghash_counter];
             else gfinput2 <= headers[ghash_counter] ^ gf_result;
             ghash_counter <= ghash_counter + 1;
          end
-         else if(ghash_counter2 < payloadlen)begin
+         else if(ghash_counter2 < readpayloadindex || ghash_counter2 == payloadlen)begin
             gfinput1 <= H;
-            outputs[readheaderindex + ghash_counter2] <= payloads[ghash_counter2] ^ aes_out[ghash_counter2 + 2];
-            gfinput2 <= payloads[ghash_counter2] ^ aes_out[ghash_counter2 + 2] ^ gf_result;
+            outputs[readheaderindex + ghash_counter2] <= payloads[ghash_counter2] ^ aes_out_reg[ghash_counter2 + 2];
+            if(ghash_counter2 == payloadlen)begin
+               gfinput2 <= gf_result ^ lena_lenc;
+               final_round <= 1;
+            end
+            else gfinput2 <= payloads[ghash_counter2] ^ aes_out_reg[ghash_counter2 + 2] ^ gf_result;
             ghash_counter2 <= ghash_counter2 + 1;
          end
-         else if(final_round != 1)begin
-            gfinput1 <= H;
-            gfinput2 <= gf_result ^ lena_lenc;
-            final_round <= 1;
-         end
          else if(final_round)begin
-         outputs[readheaderindex + ghash_counter2] <= gf_result ^ aes_out[1];
+         outputs[readheaderindex + ghash_counter2] <= gf_result ^ aes_out_reg[1];
          ghash_counter2 <= ghash_counter2 + 1;
          end
       end
@@ -156,12 +226,7 @@ always @(posedge clk or posedge rst)begin
 end
 
 
-
-
 always @(posedge clk or posedge rst)begin
-   for(i = 0 ; i < 21 ; i = i + 1 )begin
-      aes_start[i] <= 0;
-   end
    if(rst)begin
       
       for(i = 0 ; i < 100 ; i = i + 1)begin
@@ -184,79 +249,67 @@ always @(posedge clk or posedge rst)begin
       readheaderindex <= 0;
       
       readpayloadindex <= 0;
-      
-      H <= 0;
-      
-      h_computed <= 0;
-      
-      for(i = 0 ; i < 21 ; i = i + 1)begin
-         aes_start[i] <= 0;
-         aes_in[i] <= 0;
-      end
    end
 
    else begin
 
       rxPop <= 1;
-      for(i = 0 ; i < 21 ; i = i + 1)begin
-         if(aes_done[i])begin
-            if(i == 0)begin
-               h_computed <= 1;
-               H <= aes_out[0];
+      // for(i = 0 ; i < 21 ; i = i + 1)begin
+      //    if(aes_done[i])begin
+      //       if(i == 0)begin
+      //          h_computed <= 1;
+      //          H <= aes_out[0];
+      //       end
+      //    end
+      // end
+      if(!rxEmpty)begin
+         case(state)
+            startaes: begin
+               iv <= rxData;
+               headers[readheaderindex] <= rxData;
+               // outputs[readheaderindex] <= rxData;
+               readheaderindex <= readheaderindex + 1;
+               keyrec <= key;
+               keyUsed <= 1;
+               state <= readheaderlen;
             end
-         end
+            readheaderlen: begin           
+               headerlen <= rxData;
+               headers[readheaderindex] <= rxData;
+               // outputs[readheaderindex] <= rxData;
+               readheaderindex <= readheaderindex + 1;
+               state <= readpayloadlen;
+            end
+            readpayloadlen: begin
+               payloadlen <= rxData;
+               headers[readheaderindex] <= rxData;
+               // outputs[readheaderindex] <= rxData;   
+               readheaderindex <= readheaderindex + 1;     
+               lena_lenc <= {headerlen[63:0] << 7, rxData[63:0] << 7};
+               payloadlen <= rxData;
+               state <= readheader;
+            end
+            readheader:begin
+               headers[readheaderindex] <= rxData;
+               // outputs[readheaderindex] <= rxData;
+               readheaderindex <= readheaderindex + 1;
+               if(readheaderindex == headerlen - 1)begin
+                  state <= readpayload;
+               end
+            end
+            readpayload:begin
+               payloads[readpayloadindex] <= rxData;
+               readpayloadindex <= readpayloadindex + 1;
+               if(readpayloadindex == payloadlen - 1)begin
+                  state <= waits;
+               end
+            end
+            waits:begin
+            end
+            default:begin
+            end
+         endcase
       end
-      case(state)
-         startaes: begin
-            iv <= rxData;
-            headers[readheaderindex] <= rxData;
-            outputs[readheaderindex] <= rxData;
-            readheaderindex <= readheaderindex + 1;
-            keyrec <= key;
-            keyUsed <= 1;
-            state <= readheaderlen;
-         end
-         readheaderlen: begin
-            for (i = 0; i < 21; i = i + 1) begin
-               if(i == 0) aes_in[i] <= 128'h0;
-               else aes_in[i] <= iv + i - 1; 
-               aes_start[i] <= 1;
-            end            
-            headerlen <= rxData;
-            headers[readheaderindex] <= rxData;
-            outputs[readheaderindex] <= rxData;
-            readheaderindex <= readheaderindex + 1;
-            state <= readpayloadlen;
-         end
-         readpayloadlen: begin
-            payloadlen <= rxData;
-            headers[readheaderindex] <= rxData;
-            outputs[readheaderindex] <= rxData;   
-            readheaderindex <= readheaderindex + 1;     
-            lena_lenc <= {headerlen[63:0] << 7, rxData[63:0] << 7};
-            payloadlen <= rxData;
-            state <= readheader;
-         end
-         readheader:begin
-            headers[readheaderindex] <= rxData;
-            outputs[readheaderindex] <= rxData;
-            readheaderindex <= readheaderindex + 1;
-            if(readheaderindex == headerlen - 1)begin
-               state <= readpayload;
-            end
-         end
-         readpayload:begin
-            payloads[readpayloadindex] <= rxData;
-            readpayloadindex <= readpayloadindex + 1;
-            if(readpayloadindex == payloadlen - 1)begin
-               state <= waits;
-            end
-         end
-         waits:begin
-         end
-         default:begin
-         end
-      endcase
    end
 end
 endmodule
@@ -265,26 +318,34 @@ endmodule
 
 
 module gfmul (
-    input [0:127] iCtext,
-    input [0:127] iHashkey,
-    output [0:127] oResult
-    );
+   input [0:127] iCtext,
+   input [0:127] iHashkey,
+   output [0:127] oResult
+   );
 
-    wire [0:127] Z [0:128];
-    wire [0:127] V [0:127];
-    wire [0:127] iR;
-    assign iR = {8'b1110_0001, 120'd0};
-    assign V[0] = iHashkey;
-    assign Z[0] = 128'd0;
+   wire [0:127] Z [0:128];
+   
+   wire [0:127] V [0:127];
+   
+   wire [0:127] iR;
+   
+   assign iR = {8'b1110_0001, 120'd0};
+   
+   assign V[0] = iHashkey;
+   
+   assign Z[0] = 128'd0;
+   
+   genvar i, j;
+   
+   generate
+      for (i = 0; i < 127; i = i + 1)
+         assign V[i+1] = {1'b0, V[i][0:126]} ^ (iR & {128{V[i][127]}});
+      for (j = 0; j < 128; j = j + 1)
+         assign Z[j+1] = Z[j] ^ (V[j] & {128{iCtext[j]}});
+   endgenerate
+   
+   assign oResult = Z[128];
 
-    genvar i, j;
-    generate
-        for (i = 0; i < 127; i = i + 1)
-            assign V[i+1] = {1'b0, V[i][0:126]} ^ (iR & {128{V[i][127]}});
-        for (j = 0; j < 128; j = j + 1)
-            assign Z[j+1] = Z[j] ^ (V[j] & {128{iCtext[j]}});
-    endgenerate
-    assign oResult = Z[128];
 endmodule
 
 
