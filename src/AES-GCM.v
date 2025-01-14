@@ -40,12 +40,22 @@ reg aes_start [0:99];
 wire aes_done [0:99];
 reg [127:0] headers [0:99];
 reg [127:0] payloads [0:99];
+reg [127:0] outputs[0:199];
 reg [7:0] readheaderindex;
 reg [7:0] readpayloadindex;
 reg [7:0] writeheaderindex;
 reg [7:0] writepayloadindex;
 reg [127:0] H;
 reg h_computed;
+reg [9:0]ghash_counter;
+reg [9:0] ghash_counter2;
+reg final_round;
+reg [9:0]writeindex;
+reg [9:0]last_output;
+reg [127:0] gfinput1;
+reg [127:0] gfinput2;
+
+
 
 genvar j;
 generate
@@ -63,9 +73,6 @@ generate
     end
 endgenerate
 
-reg [127:0] gfinput1;
-reg [127:0] gfinput2;
-
 gfmul gf128_mult_inst (
     .iCtext(gfinput1),
     .iHashkey(gfinput2),
@@ -82,73 +89,68 @@ localparam startaes = 3'd0,
            waits = 3'd5;
 
 
-reg [9:0]ghash_counter;
-reg [9:0] ghash_counter2;
-reg final_round;
+
+
+always @(posedge clk or posedge rst) begin
+   if(rst)begin
+      finish <= 0;
+      txData <= 0;
+      txPush <= 0;
+      writeindex <= 0;      
+   end
+   else begin
+      txPush <= 0;
+      finish <= 0;
+      if(txFull == 0 && writeindex < readheaderindex + ghash_counter2)begin
+         txData <= outputs[writeindex];
+         txPush <= 1;
+         if(writeindex >= headerlen + payloadlen) finish <= 1;
+         writeindex <= writeindex + 1;
+      end
+      
+   end
+end 
+
+
 always @(posedge clk or posedge rst)begin
    if(rst)begin
       ghash_counter <= 0;
 
       ghash_counter2 <= 0;
-      gfinput1 <= 0;
-      gfinput2 <= 0;
 
-      finish <= 0;
-      txData <= 0;
-      txPush <= 0;
+      gfinput1 <= 0;
+
+      gfinput2 <= 0;
       
       final_round <= 0;
       
       writepayloadindex <= 0;
 
       writeheaderindex <= 0;
-
    end
    else begin
-      txPush <= 0;
-      if(writeheaderindex < headerlen)begin
-         txData <= headers[writeheaderindex];
-         txPush <= 1;
-         writeheaderindex <= writeheaderindex + 1;
-      end
       if(h_computed && !finish)begin
          if(ghash_counter < headerlen)begin
-            // $display("GF Result:%h" , gf_result);
             gfinput1 <= H;
-            // $display("H:%h" , H);
-            // $display("%d header: %h" , ghash_counter , headers[ghash_counter]);
             if(ghash_counter == 0) gfinput2 <= headers[ghash_counter];
             else gfinput2 <= headers[ghash_counter] ^ gf_result;
-            // $display("gfinput:%h" , headers[ghash_counter] ^ gf_result);
             ghash_counter <= ghash_counter + 1;
          end
          else if(ghash_counter2 < payloadlen)begin
-            // $display("GF Result:%h" , gf_result);
             gfinput1 <= H;
-            // $display("%d payload: %h" , ghash_counter2 , payloads[ghash_counter2]);
-            txData <= payloads[ghash_counter2] ^ aes_out[ghash_counter2 + 2];
-            txPush <= 1;
+            outputs[readheaderindex + ghash_counter2] <= payloads[ghash_counter2] ^ aes_out[ghash_counter2 + 2];
             gfinput2 <= payloads[ghash_counter2] ^ aes_out[ghash_counter2 + 2] ^ gf_result;
-   
-            // $display("gfinput:%h" , payloads[ghash_counter2] ^ aes_out[ghash_counter2 + 2] ^ gf_result);
             ghash_counter2 <= ghash_counter2 + 1;
          end
          else if(final_round != 1)begin
-            // $display("GF Result:%h" , gf_result);
             gfinput1 <= H;
             gfinput2 <= gf_result ^ lena_lenc;
-            // $display("gfinput:%h" , gf_result ^ lena_lenc);
             final_round <= 1;
          end
          else if(final_round)begin
-           txData <= gf_result ^ aes_out[1];
-           txPush <= 1;
-           finish <= 1;
+         outputs[readheaderindex + ghash_counter2] <= gf_result ^ aes_out[1];
+         ghash_counter2 <= ghash_counter2 + 1;
          end
-      end
-      else if(finish)begin
-         // $display("Final Result:%h" , txData);
-         // $stop;
       end
    end
 end
@@ -161,17 +163,15 @@ always @(posedge clk or posedge rst)begin
       aes_start[i] <= 0;
    end
    if(rst)begin
+      
       for(i = 0 ; i < 100 ; i = i + 1)begin
          headers[i] <= 0;
          payloads[i] <= 0;
       end 
+      
       lena_lenc <= 0;
 
-      // ghash_counter <= 0;
-
-      // ghash_counter2 <= 0;      
       state <= 3'd0;
-      
       
       headerlen <= 128'd0;
       
@@ -182,48 +182,37 @@ always @(posedge clk or posedge rst)begin
       keyrec <= 128'd0;
 
       readheaderindex <= 0;
-      // writeheaderindex <= 0;
       
       readpayloadindex <= 0;
-      // writepayloadindex <= 0;
-
-      // gfinput1 <= 0;
-      // gfinput2 <= 0;
-
-      // finish <= 0;
-
+      
       H <= 0;
+      
       h_computed <= 0;
+      
       for(i = 0 ; i < 21 ; i = i + 1)begin
          aes_start[i] <= 0;
          aes_in[i] <= 0;
       end
-
    end
 
    else begin
 
       rxPop <= 1;
-      // txPush <= 0;
       for(i = 0 ; i < 21 ; i = i + 1)begin
          if(aes_done[i])begin
             if(i == 0)begin
                h_computed <= 1;
                H <= aes_out[0];
             end
-            // $display("AES %d result: %h",i,aes_out[i]);
          end
       end
       case(state)
          startaes: begin
             iv <= rxData;
             headers[readheaderindex] <= rxData;
+            outputs[readheaderindex] <= rxData;
             readheaderindex <= readheaderindex + 1;
-            // txPush <= 1;
-            // txData <= rxData;
-            // $display("iv:%h" , iv);
             keyrec <= key;
-            // $display("key:%h" , key);
             keyUsed <= 1;
             state <= readheaderlen;
          end
@@ -235,29 +224,22 @@ always @(posedge clk or posedge rst)begin
             end            
             headerlen <= rxData;
             headers[readheaderindex] <= rxData;
+            outputs[readheaderindex] <= rxData;
             readheaderindex <= readheaderindex + 1;
-            // txPush <= 1;
-            // txData <= rxData;
-            // $display("headerlen:%h",rxData);
             state <= readpayloadlen;
          end
          readpayloadlen: begin
-            // txPush <= 1;
-            // txData <= rxData;
             payloadlen <= rxData;
-            headers[readheaderindex] <= rxData;   
+            headers[readheaderindex] <= rxData;
+            outputs[readheaderindex] <= rxData;   
             readheaderindex <= readheaderindex + 1;     
             lena_lenc <= {headerlen[63:0] << 7, rxData[63:0] << 7};
-            // $display("lena_lenc:%h" , lena_lenc);    
-            // $display("payloadlen:%h" , rxData);
             payloadlen <= rxData;
             state <= readheader;
          end
          readheader:begin
             headers[readheaderindex] <= rxData;
-            // txPush <= 1;
-            // txData <= rxData;
-            // $display("headers:%h" , rxData);
+            outputs[readheaderindex] <= rxData;
             readheaderindex <= readheaderindex + 1;
             if(readheaderindex == headerlen - 1)begin
                state <= readpayload;
@@ -265,20 +247,14 @@ always @(posedge clk or posedge rst)begin
          end
          readpayload:begin
             payloads[readpayloadindex] <= rxData;
-            // $display("payload:%h" , rxData);
             readpayloadindex <= readpayloadindex + 1;
             if(readpayloadindex == payloadlen - 1)begin
                state <= waits;
-               // finish = 1;
             end
          end
          waits:begin
-            // txData <=0;
-            // txPush <=0;
          end
          default:begin
-            // txData <= 0;
-            // txPush <= 0;
          end
       endcase
    end
